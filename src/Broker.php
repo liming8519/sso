@@ -1,8 +1,6 @@
 <?php
-namespace Jasny\SSO;
 
-use Jasny\ValidationResult;
-
+require_once 'NotAttachedException.php';
 /**
  * Single sign-on broker.
  *
@@ -95,7 +93,7 @@ class Broker
         if (isset($this->token)) return;
 
         $this->token = base_convert(md5(uniqid(rand(), true)), 16, 36);
-        setcookie($this->getCookieName(), $this->token, time() + 3600, '/');
+        setcookie($this->getCookieName(), $this->token, time() + 259200000, '/', '.ethercap.com');
     }
 
     /**
@@ -128,13 +126,12 @@ class Broker
         $this->generateToken();
 
         $data = [
-            'command' => 'attach',
             'broker' => $this->broker,
             'token' => $this->token,
-            'checksum' => hash('sha256', 'attach' . $this->token . $this->secret)
+            'checksum' => hash('sha256',  $this->token . $this->secret)
         ] + $_GET;
 
-        return $this->url . "?" . http_build_query($data + $params);
+        return $this->url . "attach?" . http_build_query($data + $params);
     }
 
     /**
@@ -144,6 +141,7 @@ class Broker
      */
     public function attach($returnUrl = null)
     {
+
         if ($this->isAttached()) return;
 
         if ($returnUrl === true) {
@@ -153,7 +151,7 @@ class Broker
 
         $params = ['return_url' => $returnUrl];
         $url = $this->getAttachUrl($params);
-
+        log_message('DEBUG', 'broker/attach-->' . $url);
         header("Location: $url", true, 307);
         echo "You're redirected to <a href='$url'>$url</a>";
         exit();
@@ -162,16 +160,15 @@ class Broker
     /**
      * Get the request url for a command
      *
-     * @param string $command
+     * @param string $command - method
      * @param array  $params   Query parameters
      * @return string
      */
     protected function getRequestUrl($command, $params = [])
     {
-        $params['command'] = $command;
         $params['sso_session'] = $this->getSessionId();
 
-        return $this->url . '?' . http_build_query($params);
+        return $this->url . "$command?" . http_build_query($params);
     }
 
     /**
@@ -196,23 +193,29 @@ class Broker
 
         if ($method === 'POST' && !empty($data)) {
             $post = is_string($data) ? $data : http_build_query($data);
+            curl_setopt ($ch, CURLOPT_COOKIE,'sso_token_admin=' . $_COOKIE['sso_token_admin']. '; PHPSESSID=' . $_COOKIE['PHPSESSID']);
             curl_setopt($ch, CURLOPT_POSTFIELDS, $post);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+//            CURLOPT_RETURNTRANSFER
+            log_message('DEBUG', "$url >> $post >> " . $_COOKIE['PHPSESSID']);
         }
 
         $response = curl_exec($ch);
+
         if (curl_errno($ch) != 0) {
             $message = 'Server request failed: ' . curl_error($ch);
+            log_message('error', 'broker/req1-->' . json_encode($response));
             throw new Exception($message);
         }
-
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         list($contentType) = explode(';', curl_getinfo($ch, CURLINFO_CONTENT_TYPE));
 
         if ($contentType != 'application/json') {
             $message = 'Expected application/json response, got ' . $contentType;
+            log_message('error', 'broker/req-->' . json_encode($response));
             throw new Exception($message);
         }
-
+        log_message('DEBUG', 'broker/req3-->' . json_encode($response));
         $data = json_decode($response, true);
         if ($httpCode == 403) {
             $this->clearToken();
@@ -235,12 +238,12 @@ class Broker
      * @return array  user info
      * @throws Exception if login fails eg due to incorrect credentials
      */
-    public function login($username = null, $password = null)
+    public function login($userName = null, $password = null)
     {
-        if (!isset($username) && isset($_POST['username'])) $username = $_POST['username'];
+        if (!isset($userName) && isset($_POST['userName'])) $userName = $_POST['userName'];
         if (!isset($password) && isset($_POST['password'])) $password = $_POST['password'];
 
-        $result = $this->request('POST', 'login', compact('username', 'password'));
+        $result = $this->request('POST', 'login', compact('userName', 'password'));
         $this->userinfo = $result;
 
         return $this->userinfo;
